@@ -152,14 +152,14 @@ impl Session {
                 }
             }
         }
+        // Deleted pages are freed, but an incremental save keeps them (and their text) in the
+        // earlier revision and the file does not shrink (#3407): rewrite an unsigned file in full.
+        if !signed && deletes_pages(&edit, 0) {
+            next.require_full_save();
+        }
         // Signed documents are only ever saved incrementally: an edit that needs a full rewrite
         // (applying redactions, changing security, sanitizing) would invalidate the signatures.
         // So does any edit to a file rebuilt from object headers: it has no chain to append to.
-        // Deleted pages are freed, but an incremental save keeps them (and their text) in the
-        // earlier revision and the file does not shrink (#3407): rewrite an unsigned file in full.
-        if !signed && matches!(edit, Edit::DeletePages { .. }) {
-            next.require_full_save();
-        }
         let rewrites = |c: &pdfcraft_cos::Document| c.full_save_required() || c.encryption_changed();
         if signed && ((rewrites(&next) && !rewrites(&editor.cos)) || (next.is_modified() && next.revisions().is_empty())) {
             return Err(EditError::SignedRewrite(edit.label().to_string()));
@@ -522,5 +522,15 @@ impl Session {
         doc.renderer = RenderPool::new(doc.display.clone(), render_threads(), doc.config.clone());
         doc.bytes = bytes;
         Ok(())
+    }
+}
+
+/// Whether `edit`, or an edit inside a batch, deletes pages. A batch nests only as deep as the
+/// caller built it; the depth cap keeps a hostile tool call from recursing without bound.
+fn deletes_pages(edit: &Edit, depth: usize) -> bool {
+    match edit {
+        Edit::DeletePages { .. } => true,
+        Edit::Batch { edits, .. } if depth < 8 => edits.iter().any(|e| deletes_pages(e, depth + 1)),
+        _ => false,
     }
 }

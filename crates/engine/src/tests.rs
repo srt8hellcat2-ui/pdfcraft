@@ -600,6 +600,17 @@ fn saving_after_deleting_pages_rewrites_the_file_without_them() {
 }
 
 #[test]
+fn saving_after_a_batch_that_deletes_pages_rewrites_the_file_too() {
+    let (mut s, id) = session_with(6);
+    let original = s.save_bytes(id).unwrap();
+    let edits = vec![Edit::RotatePages { pages: vec![0], degrees: 90 }, Edit::DeletePages { pages: vec![1, 2, 3, 4] }];
+    s.apply(id, Edit::Batch { label: "Tidy".into(), edits }).unwrap();
+    let saved = s.save_bytes(id).unwrap();
+    assert!(!saved.starts_with(original.as_slice()), "a full rewrite, not an update appended to the old file");
+    assert!(!contains(&saved, b"Page 3"), "a deleted page's text is not left in an earlier revision");
+}
+
+#[test]
 fn saving_after_deleting_pages_from_a_signed_file_stays_incremental() {
     let p12 = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../sign/tests/data/ec-p256.p12")).unwrap();
     let digital_id = sign::pkcs12::open(&p12, "test").unwrap();
