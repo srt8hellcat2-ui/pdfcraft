@@ -8,6 +8,22 @@ use super::{
 };
 use crate::{EditNotice, MarkKind};
 
+/// Whether the edit, or any edit inside a batch, deletes pages.
+fn deletes_pages(edit: &Edit) -> bool {
+    let mut pending = vec![std::slice::from_ref(edit).iter()];
+    while let Some(edits) = pending.last_mut() {
+        match edits.next() {
+            Some(Edit::DeletePages { .. }) => return true,
+            Some(Edit::Batch { edits, .. }) => pending.push(edits.iter()),
+            Some(_) => {}
+            None => {
+                pending.pop();
+            }
+        }
+    }
+    false
+}
+
 impl Session {
     /// Apply an edit. On success the previous state is undoable and the view data is refreshed.
     pub fn apply(&mut self, id: DocId, edit: Edit) -> Result<(), EditError> {
@@ -163,6 +179,10 @@ impl Session {
         // Signed documents are only ever saved incrementally: an edit that needs a full rewrite
         // (applying redactions, changing security, sanitizing) would invalidate the signatures.
         // So does any edit to a file rebuilt from object headers: it has no chain to append to.
+        // Deleted pages remain in earlier revisions of an incremental save (#3407).
+        if !signed && deletes_pages(&edit) {
+            next.require_full_save();
+        }
         let rewrites = |c: &pdfcraft_cos::Document| c.full_save_required() || c.encryption_changed();
         if signed && ((rewrites(&next) && !rewrites(&editor.cos)) || (next.is_modified() && next.revisions().is_empty())) {
             return Err(EditError::SignedRewrite(edit.label().to_string()));
